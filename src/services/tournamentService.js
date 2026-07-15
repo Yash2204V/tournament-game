@@ -70,69 +70,89 @@ class TournamentService {
   }
   
   async getLeaderboard(tournamentId) {
-    
     const tournament = await Tournament.findById(tournamentId);
     if (!tournament) {
       throw new NotFoundError(`Tournament not found`);
     }
 
-    
-    const scores = await Score.find({ tournamentId })
-      .populate('playerId', 'name email country')
-      .sort({ score: -1, updatedAt: 1 }); 
+    const registrations = await Registration.find({ tournamentId })
+      .populate('playerId', 'name email country');
 
-    
+    const scores = await Score.find({ tournamentId });
+
+    const scoreMap = new Map();
+    scores.forEach(s => {
+      scoreMap.set(s.playerId.toString(), {
+        score: s.score,
+        updatedAt: s.updatedAt
+      });
+    });
+
+    const combined = registrations
+      .filter(reg => reg.playerId)
+      .map(reg => {
+        const player = reg.playerId;
+        const scoreInfo = scoreMap.get(player._id.toString()) || { score: 0, updatedAt: reg.createdAt };
+        return {
+          playerId: player._id,
+          name: player.name,
+          email: player.email,
+          country: player.country,
+          score: scoreInfo.score,
+          updatedAt: scoreInfo.updatedAt
+        };
+      });
+
+    combined.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return new Date(a.updatedAt) - new Date(b.updatedAt);
+    });
+
     let currentRank = 0;
     let lastScore = null;
     let count = 0;
 
-    const leaderboard = scores.map((s) => {
+    const leaderboard = combined.map((entry) => {
       count++;
-      if (s.score !== lastScore) {
+      if (entry.score !== lastScore) {
         currentRank = count;
-        lastScore = s.score;
+        lastScore = entry.score;
       }
       return {
         rank: currentRank,
-        playerId: s.playerId._id,
-        name: s.playerId.name,
-        email: s.playerId.email,
-        country: s.playerId.country,
-        score: s.score,
+        playerId: entry.playerId,
+        name: entry.name,
+        email: entry.email,
+        country: entry.country,
+        score: entry.score,
       };
     });
 
     return leaderboard;
   }
-  
+
   async getPlayerRank(tournamentId, playerId) {
-    
     const tournament = await Tournament.findById(tournamentId);
     if (!tournament) {
       throw new NotFoundError(`Tournament not found`);
     }
 
-    
     const player = await Player.findById(playerId);
     if (!player) {
       throw new NotFoundError(`Player not found`);
     }
 
-    
     const registration = await Registration.findOne({ tournamentId, playerId });
     if (!registration) {
       throw new BadRequestError(`Player is not registered for this tournament`);
     }
 
-    
     const leaderboard = await this.getLeaderboard(tournamentId);
     const playerRankInfo = leaderboard.find(
       (entry) => entry.playerId.toString() === playerId.toString()
     );
-
-    if (!playerRankInfo) {
-      throw new NotFoundError(`No score submitted by this player for this tournament`);
-    }
 
     return {
       playerId: playerRankInfo.playerId,
